@@ -1,0 +1,56 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+
+struct BoidData{
+    float3 position;
+    float3 flockPos;
+    float3 rotation;    
+};
+
+RWStructuredBuffer<BoidData> output;
+int totalNum;
+float senseRad;
+float deltaTime;
+float boidSpeed;
+
+[numthreads(64, 1, 1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	BoidData boid = output[id.x];
+	float3 pos = boid.position;
+	float3 rot = boid.rotation;
+	float3 separation = float3(0.0, 0.0, 0.0);
+	float3 alignment = float3(0.0, 0.0, 0.0);
+	float3 cohesion = boid.flockPos;
+	float3 tempCohesion = float3(0.0, 0.0, 0.0);
+	float tempSpeed = 0;
+	uint nearbyCount = 0;
+
+	for(int i = 0; i < totalNum; i++){
+		if(i != int(id.x)){
+			BoidData tempBoid = output[i];
+			if(length(boid.position- tempBoid.position) < senseRad){
+				separation += boid.position- tempBoid.position;
+				alignment += tempBoid.rotation;
+				tempCohesion += tempBoid.position;
+				nearbyCount++;
+			}
+		}
+	}
+	
+	if(nearbyCount > 0){
+		alignment *= 1 / nearbyCount;
+		tempCohesion *= 1/ nearbyCount;
+	}
+
+	cohesion += tempCohesion;
+	float3 direction = alignment + separation + normalize(cohesion - boid.position);
+	boid.rotation = lerp(boid.rotation, normalize(direction), deltaTime * 4);
+	boid.position += boid.rotation * boidSpeed * deltaTime;
+	output[id.x] = boid;
+		
+}
