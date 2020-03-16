@@ -7,50 +7,47 @@
 
 struct BoidData{
     float3 position;
-    float3 flockPos;
-    float3 rotation;    
+	float4 rotation;
+
+    float4 flockRot;
+	float3 separationHeading;
+	float3 flockCectre;
 };
 
-RWStructuredBuffer<BoidData> output;
+RWStructuredBuffer<BoidData> boidBuffer;
+
 int totalNum;
 float senseRad;
-float deltaTime;
-float boidSpeed;
 
 [numthreads(64, 1, 1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
-	BoidData boid = output[id.x];
-	float3 pos = boid.position;
-	float3 rot = boid.rotation;
-	float3 separation = float3(0.0, 0.0, 0.0);
-	float3 alignment = float3(0.0, 0.0, 0.0);
-	float3 cohesion = boid.flockPos;
-	float3 tempCohesion = float3(0.0, 0.0, 0.0);
+	BoidData boid = boidBuffer[id.x];
+	
 	float tempSpeed = 0;
+
 	uint nearbyCount = 0;
 
 	for(int i = 0; i < totalNum; i++){
 		if(i != int(id.x)){
-			BoidData tempBoid = output[i];
-			if(length(boid.position- tempBoid.position) < senseRad){
-				separation += boid.position- tempBoid.position;
-				alignment += tempBoid.rotation;
-				tempCohesion += tempBoid.position;
+			BoidData tempBoid = boidBuffer[i];
+			float distance = length(boid.position - tempBoid.position);
+			if(distance < senseRad){
+				boid.flockRot += tempBoid.rotation;
+				boid.flockCectre += tempBoid.position;
 				nearbyCount++;
+				float seperationRatio = 1 / distance;
+				boid.separationHeading += (boid.position - tempBoid.position) * seperationRatio;
 			}
 		}
 	}
 	
 	if(nearbyCount > 0){
-		alignment *= 1 / nearbyCount;
-		tempCohesion *= 1/ nearbyCount;
+		boid.flockRot /= nearbyCount;
+		boid.flockCectre /= nearbyCount;
+
 	}
 
-	cohesion += tempCohesion;
-	float3 direction = alignment + separation + normalize(cohesion - boid.position);
-	boid.rotation = lerp(boid.rotation, normalize(direction), deltaTime * 4);
-	boid.position += boid.rotation * boidSpeed * deltaTime;
-	output[id.x] = boid;
-		
+	boidBuffer[id.x] = boid;
+
 }

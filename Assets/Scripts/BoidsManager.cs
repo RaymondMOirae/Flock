@@ -1,21 +1,35 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
+using System;
+using Random = UnityEngine.Random;
 
 public struct BoidData
 {
     public Vector3 position;
-    public Vector3 flockPos;
-    public Vector3 rotation;    
+    public Quaternion rotation;
+
+    public Quaternion flockRot;
+    public Vector3 separationHeading;
+    public Vector3 flockCentre;
 
     public static int Size
     {
         get
         {
-            return sizeof(float) * 3 * 3;
+            return sizeof(float) * (3 * 5 + 1) + 4;
+        }
+    }
+
+    public Matrix4x4 TRSMatrix {
+        get
+        {
+            return Matrix4x4.TRS(position, rotation,  new Vector3(0.3f, 0.2f, 0.9f));
         }
     }
 }
+
 
 public class BoidsManager : MonoBehaviour
 {
@@ -23,89 +37,129 @@ public class BoidsManager : MonoBehaviour
     public int totalNum = 20;
     public float boidSpeed = 1;
     public float senseRad = 10;
-    public Vector3 targetPos = Vector3.zero;
-    public Boid[] boids;
-    public Boid boidPrefab;
+
+    public Mesh boidMesh;
+    public Material boidMat;
+    [Range(0.0f, 1.0f)]
+    public float lerpInterpolant;
+    public float seperationWeight;
+    public float cohesionWeight;
+    public float marchingWeight;
+    
+
+
+    BoidData[] boidDataBuffer;
+
 
     [Header("Room Attributes")]
     public int roomSize = 40;
-    public Vector3 roomOffset = new Vector3(-20, 0, -20);
+    private Vector3 roomOffset;
+
 
     public ComputeShader compute;
 
 
     private void Start()
     {
-        SpawnBoids();
+        boidDataBuffer= new BoidData[totalNum];
+        roomOffset = new Vector3(-roomSize / 2, 0, -roomSize / 2);
+        SpawnBoidData();
     }
 
-    private void SpawnBoids()
+    private void SpawnBoidData()
     {
-
-        boids = new Boid[totalNum];
-
         for(int i = 0; i <totalNum; i++)
         {
-            Boid newBoid = GameObject.Instantiate<Boid>(boidPrefab);
-            Transform transform = newBoid.GetComponent<Transform>();
-            Vector3 pos = GenRandomPos() + roomOffset;
-            Quaternion rot = GenRandomQuad();
-            transform.SetPositionAndRotation(pos, rot);
-            newBoid.data.position = pos;
-            newBoid.data.rotation = rot.eulerAngles;
-            boids[i] = newBoid;
-
+            BoidData newBoid = new BoidData();
+            newBoid.position =GenRandomPos() + roomOffset;
+            newBoid.rotation = GenRandomQuad();
+            boidDataBuffer[i] = newBoid;
         }
     }
 
+
     private void Update()
     {
-        ManagerUpdate();
-    }
-
-
-    public void ManagerUpdate()
-    {
-        if(boids == null)
+        if (boidDataBuffer == null)
         {
             return;
         }
 
-        targetPos += new Vector3(2f, 5f, 3f);
-        transform.localPosition += new Vector3(
-                         (Mathf.Sin(Mathf.Deg2Rad * this.targetPos.x) * -0.2f),
-                         (Mathf.Sin(Mathf.Deg2Rad * this.targetPos.y) * 0.2f),
-                         (Mathf.Sin(Mathf.Deg2Rad * this.targetPos.z) * 0.2f)
-                     );
-
-        var boidData = new BoidData[totalNum];
-        for(int i = 0; i < boids.Length; i++)
-        {
-            boidData[i] = boids[i].data;
-        }
-
         var boidBuffer = new ComputeBuffer(totalNum, BoidData.Size);
-        boidBuffer.SetData(boidData);
+        boidBuffer.SetData(boidDataBuffer);
+
         int kernelIndex = compute.FindKernel("CSMain");
-        compute.SetBuffer(kernelIndex, "output", boidBuffer);
+        compute.SetBuffer(kernelIndex, "boidBuffer", boidBuffer);
         compute.SetFloat("senseRad", senseRad);
         compute.SetInt("totalNum", totalNum);
-        compute.SetFloat("deltaTime", Time.deltaTime);
-        compute.SetFloat("boidSpeed", boidSpeed);
 
         compute.Dispatch(kernelIndex, totalNum, 1, 1);
-        boidBuffer.GetData(boidData);
+        boidBuffer.GetData(boidDataBuffer);
+
+
+
+        // put result back to every boid
+        for (int i = 0; i < totalNum; i++)
+        {
+            UpdateIdentity(i);
+        }
+
         boidBuffer.Release();
 
-        for(int i = 0; i < totalNum; i++)
+        Graphics.DrawMeshInstanced(boidMesh, 0, boidMat, boidDataBuffer.Select((a) => a.TRSMatrix).ToList());
+
+    }
+    void DebugPrint()
+    {
+        int t = 0;
+        foreach(BoidData boid in boidDataBuffer)
         {
-            boids[i].transform.localPosition= boidData[i].position;
-            if (!boidData[i].rotation.Equals(Vector3.zero))
-            {
-                boids[i].transform.rotation = Quaternion.LookRotation(boidData[i].rotation);
-            }
-        }    
-        
+            t++;
+            Debug.Log(t);
+            Debug.Log("cohesion:" + boid.flockCentre.ToString());
+            Debug.Log("alignment:" + boid.rotation.ToString());
+            Debug.Log("position:" + boid.position.ToString());
+            Debug.Log("separation:" + boid.separationHeading.ToString());
+        }
+    }
+
+    public void UpdateIdentity(int i)
+    {
+        BoidData data = boidDataBuffer[i];
+
+        Vector3 acceleration = Vector3.zero;
+        Vector3 cohesion = data.flockCentre - data.position;
+        Vector3 forward = data.rotation * Vector3.forward;
+        acceleration = data.separationHeading.normalized * seperationWeight
+                       + cohesion.normalized * cohesionWeight
+                       + forward * marchingWeight;
+        Vector3 velocity = acceleration * Time.deltaTime * boidSpeed;
+        Vector3.ClampMagnitude(velocity, boidSpeed);
+        data.rotation = Quaternion.Lerp(data.rotation, data.flockRot, lerpInterpolant);
+        data.position += velocity;
+
+
+        if(Mathf.Abs(data.position.x) >= roomSize / 2||
+            Mathf.Abs(data.position.y) >= roomSize||
+            Mathf.Abs(data.position.z) >= roomSize / 2||
+            data.position.y <= 0){
+            Vector3 tempPos = data.position - roomOffset;
+            Func<Vector3, Vector3> normPosFunc = GetNormFunc((float a) => { return Mathf.Repeat(a, roomSize); });
+            tempPos = normPosFunc(tempPos);
+            data.position = tempPos + roomOffset;
+        }
+
+
+        boidDataBuffer[i] = data;
+
+    }
+
+    Func<Vector3, Vector3> GetNormFunc(Func<float, float> metaFunc)
+    {
+        return (Vector3 rawPos) =>
+        {
+            return new Vector3(metaFunc(rawPos.x), metaFunc(rawPos.y), metaFunc(rawPos.z));
+        };
     }
 
 
