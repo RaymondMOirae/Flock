@@ -12,6 +12,8 @@ struct BoidData{
     float4 flockRot;
 	float3 separationHeading;
 	float3 flockCectre;
+
+	float4x4 TRSMatrix;
 };
 
 RWStructuredBuffer<BoidData> boidBuffer;
@@ -49,5 +51,4 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	}
 
 	boidBuffer[id.x] = boid;
-
 }

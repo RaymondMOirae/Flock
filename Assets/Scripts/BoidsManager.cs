@@ -13,19 +13,13 @@ public struct BoidData
     public Quaternion flockRot;
     public Vector3 separationHeading;
     public Vector3 flockCentre;
+    public Matrix4x4 TRSMatrix;
 
     public static int Size
     {
         get
         {
-            return sizeof(float) * (3 * 5 + 2);
-        }
-    }
-
-    public Matrix4x4 TRSMatrix {
-        get
-        {
-            return Matrix4x4.TRS(position, rotation,  new Vector3(0.3f, 0.2f, 0.9f));
+            return sizeof(float) * (3 * 3 + 4 * 6 );
         }
     }
 }
@@ -45,25 +39,51 @@ public class BoidsManager : MonoBehaviour
     public float seperationWeight;
     public float cohesionWeight;
     public float marchingWeight;
-    
 
+    public Vector3 identitySscale = new Vector3(0.3f, 0.2f, 0.9f);
 
-    BoidData[] boidDataBuffer;
-
+    BoidData[] boidDataArray;
 
     [Header("Room Attributes")]
     public int roomSize = 40;
     private Vector3 roomOffset;
 
-
+    [Header("Shader&Buffer")]
     public ComputeShader compute;
+    public ComputeBuffer boidBuffer;
+    public ComputeBuffer argsBuffer;
+    private uint[] args = new uint[5] { 0, 0, 0, 0 , 0};
+    private int kernelIndex;
 
 
     private void Start()
     {
-        boidDataBuffer= new BoidData[totalNum];
+        boidDataArray = new BoidData[totalNum];
         roomOffset = new Vector3(-roomSize / 2, 0, -roomSize / 2);
         SpawnBoidData();
+        InitializeComputeBuffer();
+    }
+ private void InitializeComputeBuffer()
+    {
+        if (boidMesh != null)
+        {
+            args[0] = (uint)boidMesh.GetIndexCount(0);
+            args[1] = (uint)totalNum;
+            args[2] = (uint)boidMesh.GetIndexStart(0);
+            args[3] = (uint)boidMesh.GetBaseVertex(0);
+        }
+        argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
+        argsBuffer.SetData(args);
+
+        boidBuffer = new ComputeBuffer(totalNum, BoidData.Size);
+
+        boidMat.SetBuffer("boidsBuffer", boidBuffer);
+        boidMat.SetVector("scale", identitySscale);
+
+        kernelIndex = compute.FindKernel("CSMain");
+        compute.SetBuffer(kernelIndex, "boidBuffer", boidBuffer);
+        compute.SetFloat("senseRad", senseRad);
+        compute.SetInt("totalNum", totalNum);
     }
 
     private void SpawnBoidData()
@@ -73,30 +93,21 @@ public class BoidsManager : MonoBehaviour
             BoidData newBoid = new BoidData();
             newBoid.position =GenRandomPos() + roomOffset;
             newBoid.rotation = GenRandomQuad();
-            boidDataBuffer[i] = newBoid;
+            boidDataArray[i] = newBoid;
+            newBoid.TRSMatrix = Matrix4x4.TRS(newBoid.position, newBoid.rotation, identitySscale);
         }
     }
 
-
-    private void Update()
+    private void LateUpdate()
     {
-        if (boidDataBuffer == null)
+        if (boidDataArray == null)
         {
             return;
         }
 
-        var boidBuffer = new ComputeBuffer(totalNum, BoidData.Size);
-        boidBuffer.SetData(boidDataBuffer);
-
-        int kernelIndex = compute.FindKernel("CSMain");
-        compute.SetBuffer(kernelIndex, "boidBuffer", boidBuffer);
-        compute.SetFloat("senseRad", senseRad);
-        compute.SetInt("totalNum", totalNum);
-
-        compute.Dispatch(kernelIndex, totalNum, 1, 1);
-        boidBuffer.GetData(boidDataBuffer);
-
-
+        boidBuffer.SetData(boidDataArray);
+        compute.Dispatch(kernelIndex, totalNum / 64, 1, 1);
+        boidBuffer.GetData(boidDataArray);
 
         // put result back to every boid
         for (int i = 0; i < totalNum; i++)
@@ -104,28 +115,16 @@ public class BoidsManager : MonoBehaviour
             UpdateIdentity(i);
         }
 
-        boidBuffer.Release();
-
-        Graphics.DrawMeshInstanced(boidMesh, 0, boidMat, boidDataBuffer.Select((a) => a.TRSMatrix).ToList());
+        Bounds bounds = new Bounds(Vector3.zero, Vector3.one * roomSize);
+        Graphics.DrawMeshInstancedIndirect(boidMesh, 0, boidMat, bounds, argsBuffer);
+        //Graphics.DrawMeshInstancedProcedural(boidMesh, 0, boidMat, bounds, totalNum);
 
     }
-    void DebugPrint()
-    {
-        int t = 0;
-        foreach(BoidData boid in boidDataBuffer)
-        {
-            t++;
-            Debug.Log(t);
-            Debug.Log("cohesion:" + boid.flockCentre.ToString());
-            Debug.Log("alignment:" + boid.rotation.ToString());
-            Debug.Log("position:" + boid.position.ToString());
-            Debug.Log("separation:" + boid.separationHeading.ToString());
-        }
-    }
+
 
     public void UpdateIdentity(int i)
     {
-        BoidData data = boidDataBuffer[i];
+        BoidData data = boidDataArray[i];
 
         Vector3 acceleration = Vector3.zero;
         Vector3 cohesion = data.flockCentre - data.position;
@@ -149,9 +148,16 @@ public class BoidsManager : MonoBehaviour
             data.position = tempPos + roomOffset;
         }
 
+        data.TRSMatrix = Matrix4x4.TRS(data.position, data.rotation, identitySscale);
 
-        boidDataBuffer[i] = data;
+        boidDataArray[i] = data;
 
+    }
+
+    private void OnDisable()
+    {
+        boidBuffer.Release();
+        argsBuffer.Release();
     }
 
     Func<Vector3, Vector3> GetNormFunc(Func<float, float> metaFunc)
@@ -170,6 +176,19 @@ public class BoidsManager : MonoBehaviour
 
     Quaternion GenRandomQuad()
     {
-        return Quaternion.Euler(new Vector3(Random.Range(0, 360), Random.Range(0, 360), Random.Range(0, 360)));
+        return Quaternion.Euler(new Vector3(Random.Range(-180, 180), Random.Range(-180, 180), Random.Range(-180, 180)));
+    }
+    void DebugPrint()
+    {
+        int t = 0;
+        foreach(BoidData boid in boidDataArray)
+        {
+            t++;
+            Debug.Log(t);
+            Debug.Log("cohesion:" + boid.flockCentre.ToString());
+            Debug.Log("alignment:" + boid.rotation.ToString());
+            Debug.Log("position:" + boid.position.ToString());
+            Debug.Log("separation:" + boid.separationHeading.ToString());
+        }
     }
 }
