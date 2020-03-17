@@ -166,15 +166,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   totalNum: 1023
   boidSpeed: 0.1
-  senseRad: 6
+  senseRad: 5
   boidMesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
   boidMat: {fileID: 2100000, guid: f27ca3e2568a986419093fdfbae18b61, type: 2}
-  lerpInterpolant: 0.082
+  lerpInterpolant: 0.165
   seperationWeight: 5
   cohesionWeight: 5
   marchingWeight: 100
-  roomSize: 60
-  roomOffset: {x: -40, y: 0, z: -40}
+  roomSize: 50
   compute: {fileID: 7200000, guid: 65795bb3db9b6a6428d9e78dcbe84119, type: 3}
 --- !u!4 &296509937 stripped
 Transform:

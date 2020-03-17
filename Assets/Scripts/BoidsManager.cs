@@ -18,7 +18,7 @@ public struct BoidData
     {
         get
         {
-            return sizeof(float) * (3 * 5 + 1) + 4;
+            return sizeof(float) * (3 * 5 + 2);
         }
     }
 
